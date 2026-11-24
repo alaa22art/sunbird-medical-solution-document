@@ -1,0 +1,1203 @@
+/* ==========================================================================
+   Sunbird Healthcare — EMR Patient Plate Card
+   Version 0.6 (draft) — card view skeleton
+   Concept: patient identity card ("patient plate") for board, list and record
+   Solutions Architect: Alaa Himour | Frontend: Mohammad Khalifa
+   --------------------------------------------------------------------------
+   v0.2 changes (patient-safety review: NHS CUI ISB 1505, NISTIR 7804-1,
+   JCI / CBAHI two-identifier rule)
+   - MRN carries a visible label
+   - Patient name + DOB promoted to the identity line (second identifier)
+   - Ward / bed muted: location is never an identifier
+   - Stickers enlarged (28px, 10px text); no "?" for unknown values
+   - Nationality flag + ISO 3166 alpha-2 code in the band (role toggle)
+   - Facility moved from the card to the board header
+   - Variants: deceased, unidentified, name alert; flags max 2 + "+N"
+   - Sex moved out of the coloured band: symbol (SVG) + text tag beside DOB
+   - Nationality shown as a round flag badge in the band; stickers:
+     allergy + verification seal
+   - Encounter state: open = solid plate; closed (finished) = dashed frame,
+     outlined band, discharge date in the stay box, "Closed" tag, read-only
+   - Detail panel header = patient banner (Oracle Health banner-bar style,
+     section 5a) instead of the plate card; class chip keeps the plate link
+   - Panel tabs, content cards, data tables, lab flags, dialogs and form
+     fields added (section 5d) for the full record and record actions
+   - Master list rows are compact (class tag, ALG/NKA tag, flags) — the
+     plate is used on the card board and in the banner only
+   - Detail panel action bar (fixed under the plate) and List view
+     (master–detail, Outlook style) added in sections 5b and 5c
+   - Plate prefix = branch plate code (tenant > branch structure);
+     ward moved to the location line; tenant shown in the page header
+   --------------------------------------------------------------------------
+   UI text rule: no HL7 / FHIR codes (ADT, ORM, ORU, PID-8…) in anything
+   the user sees — plain clinical language only. Codes stay in code/docs.
+   --------------------------------------------------------------------------
+   Naming: BEM  ->  .sb-plate, .sb-plate__band, .sb-plate--ip
+   Direction: logical properties only, so the card mirrors under dir="rtl"
+   Fonts: Barlow Condensed (plate text), Inter (UI text) — Google Fonts
+   Flags: flag-icons (MIT) 1x1 SVGs, round — never emoji flags (no Windows support).
+   Never rotate, distort or crop a flag (Saudi flag carries the Shahada).
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Design tokens
+   -------------------------------------------------------------------------- */
+:root {
+  /* Sunbird / Hummingbird brand */
+  --sb-cyan: #2CC5D6;
+  --sb-teal: #1AAF9E;
+  --sb-teal-dark: #0C2E33;
+  --sb-page: #F4F7F8;
+  --sb-surface: #FFFFFF;
+  --sb-line: #D9E1E3;
+  --sb-text: #10272B;
+  --sb-text-muted: #5A6E72;
+  --sb-text-quiet: #6B6B6B;
+
+  /* Plate (physical object: always white with black ink) */
+  --sb-plate-bg: #FFFFFF;
+  --sb-plate-ink: #111111;
+  --sb-plate-border: 3px;
+  --sb-plate-radius: 8px;
+  --sb-plate-height: 84px;
+
+  /* Patient class colours (PV1-2) — band colour + text label always together */
+  --sb-class-ip: #185FA5;    /* Inpatient      PV1-2 = I */
+  --sb-class-op: #3B6D11;    /* Outpatient     PV1-2 = O */
+  --sb-class-ed: #A32D2D;    /* Emergency      PV1-2 = E */
+  --sb-class-day: #534AB7;   /* Day case */
+  --sb-class-pre: #5F5E5A;   /* Pre-admission  ADT A05 */
+  --sb-deceased: #2C2C2A;    /* Deceased (PID-30 = Y) */
+
+  /* Stickers */
+  --sb-sticker-size: 28px;
+  --sb-allergy-bg: #EF9F27;  /* amber: allergy recorded (red is reserved for ED) */
+  --sb-allergy-ink: #412402;
+  --sb-nka-bg: #E4E7E8;      /* no known allergies */
+  --sb-nka-ink: #444441;
+  --sb-seal-ok: #0F6E56;     /* NPHIES eligibility / Yakeen ID verified */
+  --sb-seal-none: #6B6B6B;   /* not verified yet */
+
+  /* Flags (one letter, max 2 shown) and alerts */
+  --sb-flag-ink: #A32D2D;
+  --sb-alert-bg: #FAEEDA;
+  --sb-alert-ink: #633806;
+
+  /* Type */
+  --sb-font-plate: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --sb-font-ui: "Inter", system-ui, sans-serif;
+  --sb-size-ward: 22px;
+  --sb-size-mrn: 28px;
+  --sb-size-stay: 22px;
+  --sb-size-name: 15px;
+}
+
+/* --------------------------------------------------------------------------
+   2. Board (multi-card grid)
+   -------------------------------------------------------------------------- */
+.sb-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+/* --------------------------------------------------------------------------
+   3. Plate card
+   -------------------------------------------------------------------------- */
+.sb-plate {
+  --sb-band: var(--sb-class-ip);
+  display: flex;
+  flex-direction: column;
+  background: var(--sb-plate-bg);
+  border: var(--sb-plate-border) solid var(--sb-plate-ink);
+  border-radius: var(--sb-plate-radius);
+  overflow: hidden;
+  color: var(--sb-plate-ink);
+  text-decoration: none;
+  font-family: var(--sb-font-ui);
+  transition: transform 120ms ease, outline-color 120ms ease;
+  outline: 3px solid transparent;
+  outline-offset: 2px;
+}
+
+.sb-plate:hover {
+  transform: translateY(-2px);
+}
+
+/* Selected = the record open in the detail pane (wrong-patient prevention) */
+.sb-plate:focus-visible,
+.sb-plate--selected {
+  outline-color: var(--sb-cyan);
+}
+
+/* Patient class modifiers */
+.sb-plate--ip  { --sb-band: var(--sb-class-ip); }
+.sb-plate--op  { --sb-band: var(--sb-class-op); }
+.sb-plate--ed  { --sb-band: var(--sb-class-ed); }
+.sb-plate--day { --sb-band: var(--sb-class-day); }
+.sb-plate--pre { --sb-band: var(--sb-class-pre); }
+
+/* Top row: the "plate" itself */
+.sb-plate__row {
+  display: flex;
+  align-items: stretch;
+  height: var(--sb-plate-height);
+}
+
+/* 3.1 Band — nationality flag (top), patient class (bottom) */
+.sb-plate__band {
+  flex: 0 0 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding-block: 6px;
+  background: var(--sb-band);
+  color: #FFFFFF;
+  font-family: var(--sb-font-ui);
+  font-weight: 500;
+}
+
+/* Nationality flag — round badge at the top of the band.
+   Source: flag-icons 1x1 (square) SVGs, clipped to a circle. The square
+   versions keep each emblem whole inside the circle (checked: Saudi Shahada
+   and sword, Egypt eagle, India chakra). Never use the 4x3 files here —
+   a circle crop of those cuts the emblem. Never rotate or stretch.
+   Country name lives in alt + title (screen readers / hover). */
+.sb-plate__nation-flag {
+  display: block;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1.5px solid #FFFFFF;
+  box-sizing: border-box;
+}
+
+.sb-plate__nation-flag--unknown {
+  border: 1.5px dashed rgba(255, 255, 255, 0.9);
+}
+
+/* Role toggle: hide nationality (default on ward boards) */
+.sb-board--hide-nation .sb-plate__nation-flag {
+  visibility: hidden;
+}
+
+.sb-plate__class {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 15px;
+  letter-spacing: 1.5px;
+}
+
+/* 3.2 Body — ward code, stickers, labelled MRN, flags */
+.sb-plate__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-inline: 6px;
+  font-family: var(--sb-font-plate);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Branch plate code — prefix of the plate (branches.plate_code, 1–3 chars) */
+.sb-plate__branch {
+  font-size: var(--sb-size-ward);
+  letter-spacing: 0.5px;
+}
+
+.sb-plate__id {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+}
+
+.sb-plate__id-label {
+  font-family: var(--sb-font-ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  color: var(--sb-text-quiet);
+}
+
+.sb-plate__mrn {
+  font-size: var(--sb-size-mrn);
+  letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-plate__flags {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  font-size: 24px;
+  color: var(--sb-flag-ink);
+}
+
+.sb-plate__flag-more {
+  font-family: var(--sb-font-ui);
+  font-size: 11px;
+  color: var(--sb-flag-ink);
+}
+
+/* 3.3 Stickers — sticker 1 = allergy status, sticker 2 = ID verification seal */
+.sb-plate__stickers {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.sb-plate__sticker {
+  width: var(--sb-sticker-size);
+  height: var(--sb-sticker-size);
+  box-sizing: border-box;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--sb-font-ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  border: 0.75px solid rgba(0, 0, 0, 0.35);
+}
+
+.sb-plate__sticker--allergy { background: var(--sb-allergy-bg); color: var(--sb-allergy-ink); }
+.sb-plate__sticker--nka     { background: var(--sb-nka-bg);     color: var(--sb-nka-ink); }
+
+.sb-plate__seal {
+  background: #F3F3F3;
+  border: 1.5px dashed var(--sb-seal-none);   /* not verified: dashed + slash, never "?" */
+  color: var(--sb-seal-none);
+}
+
+.sb-plate__seal--verified {
+  border-style: solid;
+  border-color: var(--sb-seal-ok);
+  color: var(--sb-seal-ok);
+}
+
+.sb-plate__seal svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 3.4 Stay box — day of stay / visit time / discharge or death date */
+.sb-plate__stay {
+  flex: 0 0 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-inline-start: 2px solid var(--sb-plate-ink);
+}
+
+.sb-plate__stay-label {
+  font-family: var(--sb-font-ui);
+  font-size: 11px;
+  color: var(--sb-text-muted);
+}
+
+.sb-plate__stay-value {
+  font-family: var(--sb-font-plate);
+  font-weight: 500;
+  font-size: var(--sb-size-stay);
+  line-height: 1.1;
+}
+
+/* 3.5 Identity strip — name + DOB (second identifier), then location */
+.sb-plate__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  border-block-start: 2px solid var(--sb-plate-ink);
+  color: var(--sb-text);
+}
+
+.sb-plate__identity,
+.sb-plate__detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sb-plate__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--sb-size-name);
+  font-weight: 500;
+  color: var(--sb-plate-ink);
+}
+
+.sb-plate__name-ar {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: #444444;
+}
+
+.sb-plate__dob {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: #444444;
+}
+
+/* Sex (PID-8): symbol + text tag in the white identity strip, next to DOB.
+   Mars / Venus symbols as inline SVG (not Unicode: font rendering varies),
+   always paired with the word (NHS CUI practice), neutral ink — no blue/pink.
+   Unknown: plain circle + "Unknown", never "?" */
+.sb-plate__sex {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px 0 3px;
+  border: 1px solid #444444;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #222222;
+}
+
+.sb-plate__sex-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.sb-plate__location {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--sb-text-quiet);
+}
+
+/* Status tags inside the identity strip */
+.sb-plate__tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.sb-plate__tag--name-alert {
+  background: var(--sb-alert-bg);
+  color: var(--sb-alert-ink);
+}
+
+.sb-plate__tag--deceased {
+  background: var(--sb-deceased);
+  color: #FFFFFF;
+}
+
+/* --------------------------------------------------------------------------
+   4. Variants
+   -------------------------------------------------------------------------- */
+
+/* 4.1 Deceased — black band, greyed plate, explicit tag (PID-29 / PID-30) */
+.sb-plate--deceased {
+  --sb-band: var(--sb-deceased);
+}
+
+.sb-plate--deceased .sb-plate__body,
+.sb-plate--deceased .sb-plate__stay {
+  filter: grayscale(1);
+  opacity: 0.75;
+}
+
+/* 4.1b Closed encounter (FHIR Encounter.status = finished, HL7 A03)
+   Read-only: the app must block new orders / notes or require a
+   late-entry reason. Distinct from deceased (black band). */
+.sb-plate--closed {
+  border-style: dashed;
+}
+
+.sb-plate--closed .sb-plate__band {
+  background: #FFFFFF;
+  color: var(--sb-band);
+  border-inline-end: 3px solid var(--sb-band);
+}
+
+.sb-plate--closed .sb-plate__nation-flag {
+  border-color: var(--sb-line);
+}
+
+.sb-plate--closed .sb-plate__body {
+  color: #444444;
+}
+
+.sb-plate--closed .sb-plate__stay {
+  background: #F1EFE8;
+}
+
+.sb-plate__tag--closed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #444441;
+  color: #FFFFFF;
+}
+
+.sb-plate__tag--closed svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* 4.2 Unidentified / alias registration — hatched band */
+.sb-plate--unidentified .sb-plate__band {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.22) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+/* 4.3 Compact — search results, side lists */
+.sb-plate--compact {
+  --sb-plate-height: 60px;
+  --sb-size-ward: 18px;
+  --sb-size-mrn: 22px;
+  --sb-size-stay: 18px;
+  --sb-sticker-size: 22px;
+}
+
+.sb-plate--compact .sb-plate__detail {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   5. Page skeleton — shell, toolbar, filter chips, view toggle
+   -------------------------------------------------------------------------- */
+.sb-shell {
+  display: flex;
+  flex-wrap: wrap;
+  min-height: 100vh;
+  background: var(--sb-page);
+  font-family: var(--sb-font-ui);
+  color: var(--sb-text);
+}
+
+.sb-sidebar {
+  flex: 1 1 200px;
+  max-width: 220px;
+  background: var(--sb-teal-dark);
+  color: #E6F4F5;
+  padding: 20px 14px;
+}
+
+.sb-main {
+  flex: 999 1 560px;
+  min-width: 0;
+  padding: 24px;
+}
+
+.sb-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block-end: 16px;
+}
+
+.sb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding-inline: 12px;
+  border: 1px solid var(--sb-line);
+  border-radius: 16px;
+  background: var(--sb-surface);
+  color: var(--sb-text);
+  font: 500 13px var(--sb-font-ui);
+  cursor: pointer;
+}
+
+.sb-chip--active {
+  border-color: var(--sb-teal);
+  background: #E3F6F3;
+  color: #0B5A50;
+}
+
+.sb-chip__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.sb-toggle {
+  display: inline-flex;
+  border: 1px solid var(--sb-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sb-toggle__btn {
+  height: 32px;
+  padding-inline: 12px;
+  border: 0;
+  background: var(--sb-surface);
+  font: 500 13px var(--sb-font-ui);
+  color: var(--sb-text-muted);
+  cursor: pointer;
+}
+
+.sb-toggle__btn--active {
+  background: var(--sb-teal-dark);
+  color: #FFFFFF;
+}
+
+/* Tenant > branch context (page header) */
+.sb-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--sb-text-muted);
+}
+
+.sb-context__tenant {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding-inline: 10px;
+  border: 1px solid var(--sb-line);
+  border-radius: 6px;
+  background: var(--sb-surface);
+  color: var(--sb-text);
+  font: 500 13px var(--sb-font-ui);
+}
+
+.sb-context__code {
+  font-size: 11px;
+  color: var(--sb-text-muted);
+}
+
+
+
+/* --------------------------------------------------------------------------
+   5a. Detail panel — patient banner (replaces the plate card in the panel)
+   Labelled fields (NHS CUI), clickable name / location / allergies
+   (Oracle Health + Epic practice). The class chip (band colour + round
+   flag + class + branch) keeps the visual link to the selected card.
+   -------------------------------------------------------------------------- */
+.sb-banner {
+  --sb-band: var(--sb-class-ip);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--sb-teal-dark);
+  color: #FFFFFF;
+  font-family: var(--sb-font-ui);
+}
+
+.sb-banner--ip  { --sb-band: var(--sb-class-ip); }
+.sb-banner--op  { --sb-band: var(--sb-class-op); }
+.sb-banner--ed  { --sb-band: var(--sb-class-ed); }
+.sb-banner--day { --sb-band: var(--sb-class-day); }
+.sb-banner--pre { --sb-band: var(--sb-class-pre); }
+
+.sb-banner a:not(.sb-banner__chip) {
+  color: #FFFFFF;
+  text-underline-offset: 2px;
+}
+
+.sb-banner__top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sb-banner__class {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px 0 3px;
+  border-radius: 13px;
+  border: 1.5px solid #FFFFFF;
+  background: var(--sb-band);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.sb-banner__class .sb-plate__nation-flag {
+  width: 20px;
+  height: 20px;
+  border-width: 1px;
+}
+
+.sb-banner__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.sb-banner__name-ar {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+  font-size: 14px;
+  color: #CFE6E9;
+}
+
+.sb-banner__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 6px 10px;
+}
+
+.sb-banner__label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  color: #9FC6CC;              /* 8:1 on #0C2E33 */
+}
+
+.sb-banner__value {
+  display: block;
+  font-size: 12px;
+  color: #FFFFFF;
+}
+
+.sb-banner__value--mono {
+  font-family: var(--sb-font-plate);
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  line-height: 1.1;
+}
+
+.sb-banner__alerts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.sb-banner__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.6;
+  text-decoration: none;
+}
+
+.sb-banner__chip--allergy      { background: #FAEEDA; color: #633806; }
+.sb-banner__chip--allergy-high { background: var(--sb-allergy-bg); color: var(--sb-allergy-ink); box-shadow: inset 0 0 0 2px var(--sb-allergy-ink); }
+.sb-banner__chip--nka          { background: var(--sb-nka-bg); color: var(--sb-nka-ink); }
+.sb-banner__chip--nr           { background: transparent; color: #FFFFFF; border: 1px dashed #FFFFFF; }
+.sb-banner__chip--flag         { background: #F7C1C1; color: #501313; }
+.sb-banner__chip--verified     { background: #9FE1CB; color: #04342C; }
+.sb-banner__chip--unverified   { background: transparent; color: #FFFFFF; border: 1px dashed #9FC6CC; }
+
+.sb-banner__chip svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* Closed encounter: banner keeps identity, adds a lock chip */
+.sb-banner__chip--closed { background: #444441; color: #FFFFFF; }
+/* --------------------------------------------------------------------------
+   5b. Detail panel — action bar (sticky, directly under the patient plate,
+   so every action sits next to the identity it acts on)
+   -------------------------------------------------------------------------- */
+.sb-actionbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  background: #FFFFFF;
+  border: 1px solid var(--sb-line);
+  border-radius: 8px;
+}
+
+.sb-actionbar__btn {
+  flex: 1 1 96px;
+  min-height: 44px;            /* touch target */
+  padding: 4px 8px;
+  border: 1px solid var(--sb-line);
+  border-radius: 8px;
+  background: var(--sb-surface);
+  color: var(--sb-text);
+  font: 500 13px var(--sb-font-ui);
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.sb-actionbar__btn--primary {
+  border-color: var(--sb-teal-dark);
+  background: var(--sb-teal-dark);
+  color: #FFFFFF;
+}
+
+/* --------------------------------------------------------------------------
+   5c. List view — master list (Outlook style)
+   -------------------------------------------------------------------------- */
+.sb-list {
+  display: flex;
+  flex-direction: column;
+  background: var(--sb-surface);
+  border: 1px solid var(--sb-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sb-list__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding-inline: 12px;
+  background: var(--sb-page);
+  border-block-end: 1px solid var(--sb-line);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sb-text-muted);
+}
+
+.sb-list__row {
+  --sb-band: var(--sb-class-ip);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 60px;
+  padding: 8px 12px;
+  border-block-end: 1px solid var(--sb-line);
+  color: var(--sb-text);
+  text-decoration: none;
+}
+
+.sb-list__row:hover {
+  background: #F7FAFA;
+}
+
+.sb-list__row--selected {
+  background: #E6F7F9;
+  box-shadow: inset 0 0 0 2px var(--sb-cyan);
+}
+
+.sb-list__row--ip  { --sb-band: var(--sb-class-ip); }
+.sb-list__row--op  { --sb-band: var(--sb-class-op); }
+.sb-list__row--ed  { --sb-band: var(--sb-class-ed); }
+.sb-list__row--day { --sb-band: var(--sb-class-day); }
+.sb-list__row--pre { --sb-band: var(--sb-class-pre); }
+.sb-list__row--deceased { --sb-band: var(--sb-deceased); }
+
+/* Mini band: class badge with the round flag on top */
+.sb-list__badge {
+  flex: 0 0 34px;
+  height: 44px;
+  border-radius: 4px;
+  background: var(--sb-band);
+  color: #FFFFFF;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding-block: 3px;
+  box-sizing: border-box;
+  font: 500 11px var(--sb-font-ui);
+}
+
+.sb-list__badge .sb-plate__nation-flag {
+  width: 18px;
+  height: 18px;
+  border-width: 1px;
+}
+
+.sb-list__row--closed .sb-list__badge {
+  background: #FFFFFF;
+  color: var(--sb-band);
+  border: 2px dashed var(--sb-band);
+}
+
+.sb-list__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sb-list__name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Unread = new results not yet reviewed (bold name + dot) */
+.sb-list__row--unread .sb-list__name {
+  font-weight: 500;
+}
+
+.sb-list__dot {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.sb-list__row--unread .sb-list__dot {
+  background: var(--sb-class-ip);
+}
+
+.sb-list__meta {
+  display: flex;
+  flex-wrap: wrap;              /* safety tags (similar name, deceased, closed) may wrap, never clip */
+  align-items: center;
+  gap: 2px 6px;
+  font-size: 12px;
+  color: var(--sb-text-muted);
+}
+
+.sb-list__side {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sb-list__side .sb-plate__sticker {
+  --sb-sticker-size: 24px;
+  font-size: 9.5px;
+}
+
+.sb-list__flags {
+  min-width: 20px;
+  font: 500 14px var(--sb-font-ui);
+  color: var(--sb-flag-ink);
+}
+
+.sb-list__stay {
+  min-width: 44px;
+  text-align: end;
+  font-size: 12px;
+  color: var(--sb-text-muted);
+}
+
+.sb-list__row--closed .sb-list__main {
+  color: var(--sb-text-muted);
+}
+
+
+/* Compact master-list row (no plate elements — sized for the list pane)
+   line 1: name ........ stay
+   line 2: class tag · MRN · age sex · location · safety tags
+   side:   ALG / NKA tag + red flag letters                                */
+.sb-list__line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sb-list__pill {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--sb-band);
+  color: #FFFFFF;
+  font: 500 10px var(--sb-font-ui);
+  letter-spacing: 0.3px;
+}
+
+.sb-list__row--closed .sb-list__pill {
+  background: #FFFFFF;
+  color: var(--sb-band);
+  border: 1px dashed var(--sb-band);
+}
+
+.sb-list__alg {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font: 500 10px var(--sb-font-ui);
+}
+
+.sb-list__alg--allergy { background: var(--sb-allergy-bg); color: var(--sb-allergy-ink); }
+.sb-list__alg--nka     { background: var(--sb-nka-bg);     color: var(--sb-nka-ink); }
+.sb-list__alg--nr      { background: #FFFFFF; color: #444444; border: 1px dashed #6B6B6B; }
+
+
+/* --------------------------------------------------------------------------
+   5d. Panel tabs, content cards, data tables, dialogs, forms
+   -------------------------------------------------------------------------- */
+.sb-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-block-end: 1px solid var(--sb-line);
+}
+
+.sb-tabs__tab {
+  flex-shrink: 0;
+  height: 38px;
+  padding-inline: 12px;
+  border: 0;
+  border-block-end: 2px solid transparent;
+  background: none;
+  color: var(--sb-text-muted);
+  font: 500 13px var(--sb-font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sb-tabs__tab--active {
+  color: var(--sb-teal-dark);
+  border-block-end-color: var(--sb-teal);
+}
+
+.sb-tabs__count {
+  margin-inline-start: 4px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: #FCEBEB;
+  color: #791F1F;
+  font-size: 11px;
+}
+
+.sb-card {
+  background: var(--sb-surface);
+  border: 1px solid var(--sb-line);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.sb-card__title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--sb-text);
+}
+
+.sb-kv {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  row-gap: 5px;
+  font-size: 13px;
+}
+
+.sb-kv__key {
+  color: var(--sb-text-muted);
+}
+
+.sb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.sb-table th {
+  padding: 8px 10px;
+  background: var(--sb-page);
+  color: var(--sb-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: start;
+}
+
+.sb-table td {
+  padding: 8px 10px;
+  border-block-start: 1px solid var(--sb-line);
+  vertical-align: top;
+}
+
+.sb-table tr.sb-table__row--alert td {
+  background: #FCEBEB;
+}
+
+/* Lab abnormal flags (shown as text, clinicians read H / L / HH / LL) */
+.sb-labflag        { font-weight: 500; }
+.sb-labflag--n     { color: var(--sb-text-muted); }
+.sb-labflag--h,
+.sb-labflag--l     { color: #633806; }
+.sb-labflag--hh,
+.sb-labflag--ll,
+.sb-labflag--aa    { color: #791F1F; }
+
+.sb-status {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.sb-status--open      { background: #E3F6F3; color: #0B5A50; }
+.sb-status--pending   { background: #FAEEDA; color: #633806; }
+.sb-status--done      { background: #EAF3DE; color: #27500A; }
+.sb-status--cancelled { background: #F1EFE8; color: #444441; }
+.sb-status--critical  { background: #FCEBEB; color: #791F1F; }
+
+/* Dialogs (record actions) */
+.sb-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12, 46, 51, 0.45);
+}
+
+.sb-dialog {
+  width: 560px;
+  max-width: calc(100vw - 32px);
+  background: var(--sb-surface);
+  border-radius: 12px;
+  overflow: hidden;
+  font-family: var(--sb-font-ui);
+  color: var(--sb-text);
+}
+
+.sb-dialog__head {
+  padding: 14px 18px;
+  border-block-end: 1px solid var(--sb-line);
+}
+
+.sb-dialog__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.sb-dialog__patient {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--sb-text-muted);
+}
+
+.sb-dialog__body {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.sb-dialog__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-block-start: 1px solid var(--sb-line);
+  background: var(--sb-page);
+}
+
+.sb-field {
+  display: grid;
+  gap: 4px;
+}
+
+.sb-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sb-text-muted);
+}
+
+.sb-input,
+.sb-select,
+.sb-textarea {
+  min-height: 36px;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--sb-line);
+  border-radius: 8px;
+  background: #FFFFFF;
+  font: 13px var(--sb-font-ui);
+  color: var(--sb-text);
+}
+
+.sb-textarea {
+  min-height: 72px;
+}
+
+.sb-hint {
+  font-size: 12px;
+  color: var(--sb-text-muted);
+}
+
+.sb-hint--error {
+  color: #A32D2D;
+}
+
+.sb-btn {
+  min-height: 36px;
+  padding-inline: 14px;
+  border: 1px solid var(--sb-line);
+  border-radius: 8px;
+  background: #FFFFFF;
+  color: var(--sb-text);
+  font: 500 13px var(--sb-font-ui);
+  cursor: pointer;
+}
+
+.sb-btn--primary { background: var(--sb-teal-dark); border-color: var(--sb-teal-dark); color: #FFFFFF; }
+.sb-btn--danger  { background: #A32D2D; border-color: #A32D2D; color: #FFFFFF; }
+
+.sb-notice {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.sb-notice--warning { background: #FAEEDA; color: #633806; }
+.sb-notice--danger  { background: #FCEBEB; color: #791F1F; }
+
+/* --------------------------------------------------------------------------
+   6. Responsive
+   -------------------------------------------------------------------------- */
+@media (max-width: 720px) {
+  .sb-sidebar {
+    max-width: none;
+    flex-basis: 100%;
+  }
+
+  .sb-board {
+    grid-template-columns: 1fr;
+  }
+}
