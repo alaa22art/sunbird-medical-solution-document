@@ -1,0 +1,1976 @@
+openapi: 3.0.3
+info:
+  title: Sunbird Healthcare - Patient Medical Record (PMR) API
+  version: 1.0.0
+  description: |
+    Contract-first API for the Patient Medical Record module: patient card board,
+    master-detail list, shared detail panel (banner, action bar, tabs) and record actions.
+    Single source of truth for backend (Spring Boot, openapi-generator interfaceOnly=true)
+    and frontend (openapi-typescript + openapi-fetch).
+
+    Rules
+    - tenant_id and allowed branches come from the JWT, never from the request body.
+    - Every POST requires an Idempotency-Key header (UUID, kept 24 h).
+    - PATCH/PUT require If-Match with the ETag returned by the matching GET.
+    - No HL7/FHIR codes are returned as display text; display values are ready to render.
+    - Envelope identical to EMR API v1.0 section 1.4.
+  contact:
+    name: Solutions Architect - Alaa Himour
+servers:
+  - url: https://api.healthcarecore.sa/api/v1/pmr
+    description: Production
+  - url: http://localhost:4010
+    description: Prism mock server (frontend development)
+security:
+  - bearerAuth: []
+tags:
+  - name: Context
+  - name: Board
+  - name: List
+  - name: Panel
+  - name: Actions
+  - name: Preferences
+
+paths:
+  /context:
+    get:
+      tags: [Context]
+      operationId: getContext
+      summary: Tenant, accessible branches, role and UI preferences of the current user
+      x-permission: PMR:READ
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PmrContext'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /board:
+    get:
+      tags: [Board]
+      operationId: getBoard
+      summary: Plate cards for the patient board, with filter counts
+      x-permission: PMR:READ
+      parameters:
+        - $ref: '#/components/parameters/BranchHeader'
+        - $ref: '#/components/parameters/BranchId'
+        - name: patientClass
+          in: query
+          schema:
+            $ref: '#/components/schemas/PatientClass'
+        - $ref: '#/components/parameters/EncounterStateFilter'
+        - $ref: '#/components/parameters/Q'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/BoardPage'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /folders:
+    get:
+      tags: [List]
+      operationId: getFolders
+      summary: Folder pane (My patients, wards, pre-admissions, closed 24h, new results) with counts
+      x-permission: PMR:READ
+      parameters:
+        - $ref: '#/components/parameters/BranchHeader'
+        - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Folder'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /list:
+    get:
+      tags: [List]
+      operationId: getList
+      summary: Grouped list rows for the master-detail view
+      x-permission: PMR:READ
+      parameters:
+        - $ref: '#/components/parameters/BranchHeader'
+        - name: folder
+          in: query
+          required: true
+          description: Folder key, e.g. MY, WARD:MED, PREADMIT, CLOSED_24H, NEW_RESULTS
+          schema:
+            type: string
+            example: MY
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [ward, class, attending, none]
+            default: ward
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [location, name, los, admitTime]
+            default: location
+        - $ref: '#/components/parameters/EncounterStateFilter'
+        - $ref: '#/components/parameters/Q'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ListPage'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /search:
+    get:
+      tags: [List]
+      operationId: searchPatients
+      summary: Quick find by MRN, name (EN/AR) or national ID
+      x-permission: PMR:READ
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 3
+      responses:
+        '200':
+          description: OK, max 20 rows
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        maxItems: 20
+                        items:
+                          $ref: '#/components/schemas/ListRow'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/banner:
+    get:
+      tags: [Panel]
+      operationId: getBanner
+      summary: Patient banner and available actions; logs a VIEW_RECORD audit event
+      x-permission: PMR:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - $ref: '#/components/parameters/EncounterIdQuery'
+      responses:
+        '200':
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Banner'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/summary:
+    get:
+      tags: [Panel]
+      operationId: getSummary
+      summary: Summary tab - current encounter, visit history, safety, orders and results, vitals, diagnoses
+      x-permission: PMR:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - $ref: '#/components/parameters/EncounterIdQuery'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PanelSummary'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/visits:
+    get:
+      tags: [Panel]
+      operationId: getVisits
+      summary: Visits tab - encounter timeline
+      x-permission: PMR:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - name: patientClass
+          in: query
+          schema:
+            $ref: '#/components/schemas/PatientClass'
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/VisitPage'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/results:
+    get:
+      tags: [Panel]
+      operationId: getResults
+      summary: Results tab - lab and radiology, critical and abnormal first
+      x-permission: RESULT:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [lab, rad]
+        - name: abnormalOnly
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ResultPage'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/orders:
+    get:
+      tags: [Panel]
+      operationId: getOrders
+      summary: Orders tab
+      x-permission: ORDER:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/OrderStatus'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OrderPage'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/vitals:
+    get:
+      tags: [Panel]
+      operationId: getVitals
+      summary: Vitals tab - latest grid and trend series
+      x-permission: VITALS:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/VitalsView'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/diagnoses:
+    get:
+      tags: [Panel]
+      operationId: getDiagnoses
+      summary: Diagnoses tab
+      x-permission: PMR:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, resolved]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Diagnosis'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/appointments:
+    get:
+      tags: [Panel]
+      operationId: getAppointments
+      summary: Appointments tab
+      x-permission: APPOINTMENT:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - name: when
+          in: query
+          schema:
+            type: string
+            enum: [upcoming, past]
+            default: upcoming
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Appointment'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [Actions]
+      operationId: bookAppointment
+      summary: Book appointment
+      x-permission: APPOINTMENT:CREATE
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookAppointmentRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/Created'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/allergies:
+    get:
+      tags: [Panel]
+      operationId: getAllergies
+      summary: Allergies and medications tab - allergy list and status (ALG, ALG_HIGH, NKA, NR)
+      x-permission: PMR:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AllergyView'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [Actions]
+      operationId: recordAllergy
+      summary: Record an allergy, or assert no known allergies (NKA / NKDA)
+      x-permission: ALLERGY:CREATE
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordAllergyRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/Created'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/medications:
+    get:
+      tags: [Panel]
+      operationId: getMedications
+      summary: Active and past medications
+      x-permission: MEDICATION:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, completed, stopped]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Medication'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/coverage:
+    get:
+      tags: [Panel]
+      operationId: getCoverage
+      summary: Coverage tab - payer, eligibility, pre-authorizations
+      x-permission: COVERAGE:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CoverageView'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/audit:
+    get:
+      tags: [Panel]
+      operationId: getAudit
+      summary: Audit tab - who viewed or changed the record
+      x-permission: AUDIT:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AuditPage'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}:
+    patch:
+      tags: [Actions]
+      operationId: updatePatientDetails
+      summary: Update details (demographics, contact, nationality)
+      x-permission: PATIENT:UPDATE
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePatientRequest'
+      responses:
+        '200':
+          description: Updated
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /patients/{patientId}/results/seen:
+    post:
+      tags: [Actions]
+      operationId: markResultsSeen
+      summary: Mark new results as reviewed for the current user (clears the unread dot)
+      x-permission: RESULT:READ
+      parameters:
+        - $ref: '#/components/parameters/PatientId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Done
+        default:
+          $ref: '#/components/responses/Error'
+
+  /encounters/{encounterId}/orders:
+    post:
+      tags: [Actions]
+      operationId: createOrder
+      summary: New order (lab or radiology)
+      x-permission: ORDER:CREATE
+      parameters:
+        - $ref: '#/components/parameters/EncounterId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/Created'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /encounters/{encounterId}/vitals:
+    post:
+      tags: [Actions]
+      operationId: recordVitals
+      summary: Record vitals
+      x-permission: VITALS:CREATE
+      parameters:
+        - $ref: '#/components/parameters/EncounterId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordVitalsRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/Created'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /encounters/{encounterId}/transfer:
+    post:
+      tags: [Actions]
+      operationId: transferPatient
+      summary: Transfer to another ward or bed
+      x-permission: ADT:TRANSFER
+      parameters:
+        - $ref: '#/components/parameters/EncounterId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/Created'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /encounters/{encounterId}/discharge:
+    post:
+      tags: [Actions]
+      operationId: dischargePatient
+      summary: Discharge; closes the encounter (becomes read-only)
+      x-permission: ADT:DISCHARGE
+      parameters:
+        - $ref: '#/components/parameters/EncounterId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DischargeRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/Created'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /encounters/{encounterId}/diagnoses:
+    post:
+      tags: [Actions]
+      operationId: addDiagnosis
+      summary: Add diagnosis (ICD-10-AM)
+      x-permission: DIAGNOSIS:CREATE
+      parameters:
+        - $ref: '#/components/parameters/EncounterId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddDiagnosisRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/Created'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /encounters/{encounterId}/late-entries:
+    post:
+      tags: [Actions]
+      operationId: createLateEntry
+      summary: Late entry on a closed encounter; wraps one action with a mandatory reason
+      x-permission: ENCOUNTER:LATE_ENTRY
+      parameters:
+        - $ref: '#/components/parameters/EncounterId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LateEntryRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/Created'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /results/{observationId}/acknowledge:
+    post:
+      tags: [Actions]
+      operationId: acknowledgeResult
+      summary: Acknowledge a critical result (HH, LL, AA)
+      x-permission: RESULT:ACK
+      parameters:
+        - name: observationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcknowledgeResultRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/Created'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /me/preferences:
+    put:
+      tags: [Preferences]
+      operationId: savePreferences
+      summary: Save UI preferences (last tab, density, group, sort)
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UiPreferences'
+      responses:
+        '200':
+          description: Saved
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        default:
+          $ref: '#/components/responses/Error'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    PatientId:
+      name: patientId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    EncounterId:
+      name: encounterId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    EncounterIdQuery:
+      name: encounterId
+      in: query
+      description: Encounter shown in the panel; defaults to the latest open encounter
+      schema:
+        type: string
+        format: uuid
+    BranchHeader:
+      name: X-Branch-Id
+      in: header
+      description: Optional branch scope; must be in the user's tenant access
+      schema:
+        type: string
+        format: uuid
+    BranchId:
+      name: branchId
+      in: query
+      schema:
+        type: string
+        format: uuid
+    EncounterStateFilter:
+      name: encounterState
+      in: query
+      description: ACTIVE = open + closed in the last 24 hours
+      schema:
+        type: string
+        enum: [ACTIVE, OPEN, CLOSED]
+        default: ACTIVE
+    Q:
+      name: q
+      in: query
+      schema:
+        type: string
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    Size:
+      name: size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+
+  responses:
+    Created:
+      description: Created
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+  schemas:
+    Envelope:
+      type: object
+      required: [success, code, message, timestamp, traceId]
+      properties:
+        success:
+          type: boolean
+        code:
+          type: integer
+        message:
+          type: string
+        data: {}
+        timestamp:
+          type: string
+          format: date-time
+        traceId:
+          type: string
+
+    ErrorEnvelope:
+      type: object
+      required: [success, code, message, errorCode, traceId]
+      properties:
+        success:
+          type: boolean
+          example: false
+        code:
+          type: integer
+          example: 409
+        message:
+          type: string
+          example: Encounter is closed
+        errorCode:
+          type: string
+          enum:
+            - ENCOUNTER_CLOSED
+            - LATE_ENTRY_REASON_REQUIRED
+            - PATIENT_DECEASED
+            - NOT_IN_BRANCH
+            - VERSION_CONFLICT
+            - DUPLICATE_REQUEST
+            - RESULT_ALREADY_ACKNOWLEDGED
+            - VALIDATION_FAILED
+            - NOT_FOUND
+            - FORBIDDEN
+            - UNAUTHORIZED
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+        traceId:
+          type: string
+
+    PageInfo:
+      type: object
+      properties:
+        number:
+          type: integer
+        size:
+          type: integer
+        totalElements:
+          type: integer
+
+    I18nText:
+      type: object
+      required: [en, ar]
+      properties:
+        en:
+          type: string
+        ar:
+          type: string
+
+    PatientClass:
+      type: string
+      enum: [IP, OP, ED, DC, PA]
+      description: IP inpatient, OP outpatient, ED emergency, DC day case, PA pre-admission
+
+    EncounterState:
+      type: string
+      enum: [OPEN, CLOSED]
+
+    AllergyStatus:
+      type: string
+      enum: [ALG, ALG_HIGH, NKA, NR]
+      description: NR = not recorded (never shown as NKA)
+
+    Sex:
+      type: string
+      enum: [M, F, U]
+
+    FlagCode:
+      type: string
+      enum: [V, I, F, D, N]
+      description: V VIP, I isolation, F fall risk, D DNR, N name alert
+
+    ActionCode:
+      type: string
+      enum:
+        - NEW_ORDER
+        - RECORD_VITALS
+        - TRANSFER
+        - DISCHARGE
+        - UPDATE_DETAILS
+        - BOOK_APPOINTMENT
+        - ADD_DIAGNOSIS
+        - RECORD_ALLERGY
+        - LATE_ENTRY
+
+    Nationality:
+      type: object
+      nullable: true
+      description: Null when unknown or when the caller lacks PMR:VIEW_NATIONALITY
+      properties:
+        iso2:
+          type: string
+          pattern: '^[A-Z]{2}$'
+          example: SA
+        name:
+          $ref: '#/components/schemas/I18nText'
+
+    Stay:
+      type: object
+      required: [label, value]
+      properties:
+        label:
+          type: string
+          enum: [day, time, out, died]
+        value:
+          type: string
+          example: '5'
+
+    Location:
+      type: object
+      properties:
+        ward:
+          type: string
+          example: MED
+        bed:
+          type: string
+          example: 12-B
+        display:
+          type: string
+          example: MED 12-B
+
+    BranchRef:
+      type: object
+      required: [id, plateCode]
+      properties:
+        id:
+          type: string
+          format: uuid
+        plateCode:
+          type: string
+          maxLength: 3
+          example: OLY
+        name:
+          $ref: '#/components/schemas/I18nText'
+
+    PmrContext:
+      type: object
+      properties:
+        tenant:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            code:
+              type: string
+              example: AR-MED-001
+            name:
+              $ref: '#/components/schemas/I18nText'
+        branches:
+          type: array
+          items:
+            $ref: '#/components/schemas/BranchRef'
+        permissions:
+          type: array
+          items:
+            type: string
+          example: [PMR:READ, ORDER:CREATE, RESULT:ACK]
+        preferences:
+          $ref: '#/components/schemas/UiPreferences'
+
+    UiPreferences:
+      type: object
+      properties:
+        lastTab:
+          type: string
+          enum: [summary, visits, results, orders, vitals, diagnoses, appointments, allergies, coverage, audit]
+          default: summary
+        density:
+          type: string
+          enum: [rows, table]
+          default: rows
+        groupBy:
+          type: string
+          enum: [ward, class, attending, none]
+          default: ward
+        sort:
+          type: string
+          enum: [location, name, los, admitTime]
+          default: location
+        panelLayout:
+          type: string
+          enum: [push, overlay, split]
+          default: push
+
+    PlateCard:
+      type: object
+      required: [patientId, encounterId, mrnDisplay, name, sex, patientClass, branch, encounterState, stay, allergyStatus, identityVerified, flags, variants]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        encounterId:
+          type: string
+          format: uuid
+        mrn:
+          type: string
+          example: '00123456'
+        mrnDisplay:
+          type: string
+          example: 0012 3456
+        name:
+          $ref: '#/components/schemas/I18nText'
+        sex:
+          $ref: '#/components/schemas/Sex'
+        birthDate:
+          type: string
+          format: date
+          nullable: true
+        ageDisplay:
+          type: string
+          example: 54y
+        nationality:
+          $ref: '#/components/schemas/Nationality'
+        patientClass:
+          $ref: '#/components/schemas/PatientClass'
+        branch:
+          $ref: '#/components/schemas/BranchRef'
+        location:
+          $ref: '#/components/schemas/Location'
+        attending:
+          type: object
+          properties:
+            id:
+              type: string
+            display:
+              type: string
+        encounterState:
+          $ref: '#/components/schemas/EncounterState'
+        stay:
+          $ref: '#/components/schemas/Stay'
+        allergyStatus:
+          $ref: '#/components/schemas/AllergyStatus'
+        identityVerified:
+          type: boolean
+        flags:
+          type: array
+          description: Ordered by priority D, I, F, V, N; UI shows 2 + "+N"
+          items:
+            $ref: '#/components/schemas/FlagCode'
+        variants:
+          type: object
+          properties:
+            deceased:
+              type: boolean
+            unidentified:
+              type: boolean
+            nameAlert:
+              type: boolean
+        discharge:
+          type: object
+          nullable: true
+          properties:
+            at:
+              type: string
+              format: date-time
+            disposition:
+              $ref: '#/components/schemas/I18nText'
+        newResults:
+          type: integer
+          minimum: 0
+
+    BoardCounts:
+      type: object
+      properties:
+        byClass:
+          type: object
+          additionalProperties:
+            type: integer
+          example: { ALL: 12, IP: 8, OP: 1, ED: 2, DC: 1, PA: 1 }
+        byEncounterState:
+          type: object
+          properties:
+            ACTIVE:
+              type: integer
+            OPEN:
+              type: integer
+            CLOSED:
+              type: integer
+
+    BoardPage:
+      type: object
+      properties:
+        cards:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlateCard'
+        counts:
+          $ref: '#/components/schemas/BoardCounts'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+
+    Folder:
+      type: object
+      required: [key, label, count]
+      properties:
+        key:
+          type: string
+          example: WARD:MED
+        label:
+          $ref: '#/components/schemas/I18nText'
+        count:
+          type: integer
+        highlight:
+          type: boolean
+          description: true for New results when count > 0
+
+    ListTag:
+      type: object
+      properties:
+        code:
+          type: string
+          enum: [SIMILAR_NAME, DECEASED, CLOSED]
+        label:
+          $ref: '#/components/schemas/I18nText'
+
+    ListRow:
+      type: object
+      required: [patientId, encounterId, name, mrnDisplay, sex, patientClass, encounterState, allergyStatus, flags, unread]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        encounterId:
+          type: string
+          format: uuid
+        name:
+          $ref: '#/components/schemas/I18nText'
+        mrnDisplay:
+          type: string
+        sex:
+          $ref: '#/components/schemas/Sex'
+        ageDisplay:
+          type: string
+        patientClass:
+          $ref: '#/components/schemas/PatientClass'
+        encounterState:
+          $ref: '#/components/schemas/EncounterState'
+        location:
+          $ref: '#/components/schemas/Location'
+        stay:
+          $ref: '#/components/schemas/Stay'
+        allergyStatus:
+          $ref: '#/components/schemas/AllergyStatus'
+        flags:
+          type: array
+          items:
+            $ref: '#/components/schemas/FlagCode'
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/ListTag'
+        unread:
+          type: boolean
+
+    ListGroup:
+      type: object
+      properties:
+        key:
+          type: string
+        label:
+          $ref: '#/components/schemas/I18nText'
+        count:
+          type: integer
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/ListRow'
+
+    ListPage:
+      type: object
+      properties:
+        folder:
+          type: string
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/ListGroup'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+
+    AllergyItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        substance:
+          $ref: '#/components/schemas/I18nText'
+        category:
+          type: string
+          enum: [food, medication, environment, biologic]
+        criticality:
+          type: string
+          enum: [low, high, unable-to-assess]
+        reaction:
+          type: string
+          nullable: true
+        verificationStatus:
+          type: string
+          enum: [unconfirmed, presumed, confirmed]
+        recordedAt:
+          type: string
+          format: date-time
+
+    Alert:
+      type: object
+      properties:
+        code:
+          $ref: '#/components/schemas/FlagCode'
+        label:
+          $ref: '#/components/schemas/I18nText'
+
+    Banner:
+      type: object
+      required: [patientId, encounterId, classChip, name, fields, allergyStatus, encounterState, availableActions, version]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        encounterId:
+          type: string
+          format: uuid
+        classChip:
+          type: object
+          properties:
+            patientClass:
+              $ref: '#/components/schemas/PatientClass'
+            branchPlateCode:
+              type: string
+            nationalityIso2:
+              type: string
+              nullable: true
+        name:
+          $ref: '#/components/schemas/I18nText'
+        fields:
+          type: object
+          properties:
+            mrn:
+              type: string
+            dobAge:
+              type: string
+              example: 12-Mar-1972 · 54y
+            sex:
+              $ref: '#/components/schemas/Sex'
+            location:
+              type: string
+            admitted:
+              type: string
+              format: date-time
+            attending:
+              type: string
+        allergies:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllergyItem'
+        allergyStatus:
+          $ref: '#/components/schemas/AllergyStatus'
+        alerts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+        identityVerified:
+          type: boolean
+        deceased:
+          type: boolean
+        encounterState:
+          $ref: '#/components/schemas/EncounterState'
+        availableActions:
+          type: array
+          description: Computed from permissions, encounter state and deceased flag; closed = [LATE_ENTRY]
+          items:
+            $ref: '#/components/schemas/ActionCode'
+        version:
+          type: integer
+
+    CriticalResult:
+      type: object
+      properties:
+        observationId:
+          type: string
+          format: uuid
+        test:
+          type: string
+        value:
+          type: string
+        unit:
+          type: string
+        flag:
+          type: string
+          enum: [HH, LL, AA]
+        at:
+          type: string
+          format: date-time
+
+    ResultLine:
+      type: object
+      properties:
+        observationId:
+          type: string
+          format: uuid
+        test:
+          type: string
+        value:
+          type: string
+        unit:
+          type: string
+        flag:
+          type: string
+          enum: [N, H, L, HH, LL, A, AA]
+        status:
+          type: string
+          enum: [preliminary, final, corrected]
+        category:
+          type: string
+          enum: [lab, rad]
+        at:
+          type: string
+          format: date-time
+        acknowledged:
+          type: boolean
+        unread:
+          type: boolean
+
+    VitalsPoint:
+      type: object
+      properties:
+        at:
+          type: string
+          format: date-time
+        hr:
+          type: integer
+        bpSys:
+          type: integer
+        bpDia:
+          type: integer
+        rr:
+          type: integer
+        spo2:
+          type: integer
+        tempC:
+          type: number
+
+    Diagnosis:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          example: J18.9
+        system:
+          type: string
+          example: ICD-10-AM
+        display:
+          type: string
+        status:
+          type: string
+          enum: [active, resolved]
+        encounterId:
+          type: string
+          format: uuid
+        recordedAt:
+          type: string
+          format: date-time
+
+    PanelSummary:
+      type: object
+      properties:
+        currentEncounter:
+          type: object
+          properties:
+            state:
+              $ref: '#/components/schemas/EncounterState'
+            status:
+              type: string
+            admittedAt:
+              type: string
+              format: date-time
+            losDays:
+              type: integer
+            location:
+              type: string
+            attending:
+              type: string
+            diagnosis:
+              $ref: '#/components/schemas/Diagnosis'
+        visitHistory:
+          type: object
+          properties:
+            periodMonths:
+              type: integer
+              example: 12
+            total:
+              type: integer
+            byClass:
+              type: object
+              additionalProperties:
+                type: integer
+            lastVisit:
+              type: object
+              properties:
+                class:
+                  $ref: '#/components/schemas/PatientClass'
+                date:
+                  type: string
+                  format: date
+            readmission30d:
+              type: boolean
+            edReturn72h:
+              type: boolean
+        safety:
+          type: object
+          properties:
+            criticalUnacknowledged:
+              type: array
+              items:
+                $ref: '#/components/schemas/CriticalResult'
+        ordersResults:
+          type: object
+          properties:
+            pendingLab:
+              type: integer
+            pendingRad:
+              type: integer
+            newAbnormal:
+              type: integer
+            latest:
+              type: array
+              items:
+                $ref: '#/components/schemas/ResultLine'
+        latestVitals:
+          $ref: '#/components/schemas/VitalsPoint'
+        activeDiagnoses:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnosis'
+
+    Visit:
+      type: object
+      properties:
+        encounterId:
+          type: string
+          format: uuid
+        patientClass:
+          $ref: '#/components/schemas/PatientClass'
+        state:
+          $ref: '#/components/schemas/EncounterState'
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+          nullable: true
+        branchPlateCode:
+          type: string
+        location:
+          type: string
+        attending:
+          type: string
+        mainDiagnosis:
+          $ref: '#/components/schemas/Diagnosis'
+        disposition:
+          $ref: '#/components/schemas/I18nText'
+
+    VisitPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Visit'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+
+    ResultPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResultLine'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+
+    OrderStatus:
+      type: string
+      enum: [ordered, in-progress, completed, cancelled]
+
+    Order:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        category:
+          type: string
+          enum: [lab, rad]
+        code:
+          type: string
+          description: LOINC or local service code (backend only, not for display)
+        display:
+          type: string
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        priority:
+          type: string
+          enum: [routine, urgent, stat]
+        orderedAt:
+          type: string
+          format: date-time
+        orderedBy:
+          type: string
+
+    OrderPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+
+    VitalsView:
+      type: object
+      properties:
+        latest:
+          $ref: '#/components/schemas/VitalsPoint'
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/VitalsPoint'
+        earlyWarningScore:
+          type: object
+          nullable: true
+          properties:
+            name:
+              type: string
+              example: NEWS2
+            value:
+              type: integer
+            band:
+              type: string
+              enum: [low, medium, high]
+
+    Appointment:
+      type: object
+      properties:
+        appointmentId:
+          type: string
+          format: uuid
+        start:
+          type: string
+          format: date-time
+        clinic:
+          type: string
+        provider:
+          type: string
+        status:
+          type: string
+          enum: [booked, arrived, fulfilled, cancelled, noshow]
+        reason:
+          type: string
+
+    AllergyView:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/AllergyStatus'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllergyItem'
+        assertion:
+          type: object
+          nullable: true
+          description: NKA / NKDA assertion when no allergy is recorded
+          properties:
+            type:
+              type: string
+              enum: [NKA, NKDA]
+            assertedBy:
+              type: string
+            assertedAt:
+              type: string
+              format: date-time
+
+    Medication:
+      type: object
+      properties:
+        medicationId:
+          type: string
+          format: uuid
+        display:
+          $ref: '#/components/schemas/I18nText'
+        dose:
+          type: string
+        route:
+          type: string
+        frequency:
+          type: string
+        status:
+          type: string
+          enum: [active, completed, stopped]
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+          nullable: true
+
+    CoverageView:
+      type: object
+      properties:
+        payerName:
+          type: string
+        policyNumber:
+          type: string
+        planClass:
+          type: string
+        validFrom:
+          type: string
+          format: date
+        validTo:
+          type: string
+          format: date
+        eligibility:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [eligible, not-eligible, not-checked, error]
+            checkedAt:
+              type: string
+              format: date-time
+              nullable: true
+        preAuthorizations:
+          type: array
+          items:
+            type: object
+            properties:
+              serviceDisplay:
+                type: string
+              status:
+                type: string
+                enum: [pending, approved, partial, rejected]
+              requestedAt:
+                type: string
+                format: date-time
+
+    AuditEntry:
+      type: object
+      properties:
+        at:
+          type: string
+          format: date-time
+        user:
+          type: string
+        action:
+          type: string
+          enum: [VIEW_RECORD, CREATE, UPDATE, LATE_ENTRY, ACKNOWLEDGE]
+        area:
+          type: string
+          example: banner
+        detail:
+          type: string
+
+    AuditPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEntry'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+
+    CreateOrderRequest:
+      type: object
+      required: [patientId, category, code, priority]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+          description: Must match the encounter's patient, else 422
+        category:
+          type: string
+          enum: [lab, rad]
+        code:
+          type: string
+        priority:
+          type: string
+          enum: [routine, urgent, stat]
+        note:
+          type: string
+
+    RecordVitalsRequest:
+      type: object
+      required: [patientId, at]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        at:
+          type: string
+          format: date-time
+        hr:
+          type: integer
+        bpSys:
+          type: integer
+        bpDia:
+          type: integer
+        rr:
+          type: integer
+        spo2:
+          type: integer
+        tempC:
+          type: number
+
+    TransferRequest:
+      type: object
+      required: [patientId, toWard, toBed]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        toBranchId:
+          type: string
+          format: uuid
+        toWard:
+          type: string
+        toBed:
+          type: string
+        reason:
+          type: string
+
+    DischargeRequest:
+      type: object
+      required: [patientId, disposition, at]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        disposition:
+          type: string
+          enum: [home, transfer-out, against-advice, expired, other]
+        at:
+          type: string
+          format: date-time
+        note:
+          type: string
+
+    AddDiagnosisRequest:
+      type: object
+      required: [patientId, code]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        code:
+          type: string
+          example: J18.9
+        primary:
+          type: boolean
+          default: false
+
+    BookAppointmentRequest:
+      type: object
+      required: [start, clinic, provider]
+      properties:
+        start:
+          type: string
+          format: date-time
+        clinic:
+          type: string
+        provider:
+          type: string
+        reason:
+          type: string
+
+    RecordAllergyRequest:
+      type: object
+      properties:
+        assertion:
+          type: string
+          enum: [NKA, NKDA]
+          description: Set to assert no known allergies; leave empty when recording an allergy
+        substanceCode:
+          type: string
+        substanceSystem:
+          type: string
+          enum: [SNOMED, RXNORM, LOCAL]
+        category:
+          type: string
+          enum: [food, medication, environment, biologic]
+        criticality:
+          type: string
+          enum: [low, high, unable-to-assess]
+        reaction:
+          type: string
+
+    UpdatePatientRequest:
+      type: object
+      properties:
+        name:
+          $ref: '#/components/schemas/I18nText'
+        birthDate:
+          type: string
+          format: date
+        sex:
+          $ref: '#/components/schemas/Sex'
+        nationalityIso2:
+          type: string
+          pattern: '^[A-Z]{2}$'
+        phone:
+          type: string
+
+    LateEntryRequest:
+      type: object
+      required: [patientId, action, reason, payload]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [NEW_ORDER, RECORD_VITALS, ADD_DIAGNOSIS, RECORD_ALLERGY]
+        reason:
+          type: string
+          minLength: 10
+        payload:
+          type: object
+          description: Body of the wrapped action (CreateOrderRequest, RecordVitalsRequest, ...)
+
+    AcknowledgeResultRequest:
+      type: object
+      required: [actionTaken]
+      properties:
+        actionTaken:
+          type: string
+          minLength: 3
+          example: Doctor informed, repeat K+ ordered
